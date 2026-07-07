@@ -526,6 +526,58 @@ func TestBuildConfig(t *testing.T) {
 	assertMapValue(t, inbounds[0], "type", "shadowsocks")
 }
 
+func TestBuildConfig_ShadowsocksProxyProtocol(t *testing.T) {
+	kcfg := config.KernelConfig{LogLevel: "info"}
+
+	t.Run("disabled by default", func(t *testing.T) {
+		nc := &panel.NodeConfig{
+			Protocol:   "shadowsocks",
+			ServerPort: 111,
+			Cipher:     "aes-128-gcm",
+		}
+		cfg := buildConfig(kcfg, testNodeSpec(nc), testUsers, kernel.TLSCert{})
+		inbounds := cfg["inbounds"].([]M)
+		if _, ok := inbounds[0]["proxy_protocol"]; ok {
+			t.Fatal("proxy_protocol should be omitted by default")
+		}
+		assertMapValue(t, inbounds[0], "listen_port", 111)
+	})
+
+	t.Run("enabled from panel field", func(t *testing.T) {
+		nc := &panel.NodeConfig{
+			Protocol:            "shadowsocks",
+			ServerPort:          111,
+			Cipher:              "aes-128-gcm",
+			AcceptProxyProtocol: true,
+		}
+		cfg := buildConfig(kcfg, testNodeSpec(nc), testUsers, kernel.TLSCert{})
+		inbounds := cfg["inbounds"].([]M)
+		if _, ok := inbounds[0]["proxy_protocol"]; ok {
+			t.Fatal("proxy_protocol should be handled by xboard-node forwarder, not sing-box")
+		}
+		assertMapValue(t, inbounds[0], "listen", "127.0.0.1")
+		assertMapValue(t, inbounds[0], "listen_port", 10111)
+	})
+
+	t.Run("enabled from network settings", func(t *testing.T) {
+		nc := &panel.NodeConfig{
+			Protocol:   "shadowsocks",
+			ServerPort: 111,
+			Cipher:     "aes-128-gcm",
+			NetworkSettings: map[string]interface{}{
+				"acceptProxyProtocol": true,
+			},
+		}
+		cfg := buildConfig(kcfg, testNodeSpec(nc), testUsers, kernel.TLSCert{})
+		inbounds := cfg["inbounds"].([]M)
+		if _, ok := inbounds[0]["proxy_protocol"]; ok {
+			t.Fatal("proxy_protocol should be handled by xboard-node forwarder, not sing-box")
+		}
+		assertMapValue(t, inbounds[0], "listen", "127.0.0.1")
+		assertMapValue(t, inbounds[0], "listen_port", 10111)
+	})
+}
+
 func TestBuildConfig_OutboundPriority(t *testing.T) {
 	kcfg := config.KernelConfig{
 		LogLevel: "info",

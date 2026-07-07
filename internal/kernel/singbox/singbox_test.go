@@ -2,9 +2,11 @@ package singbox
 
 import (
 	"context"
+	"encoding/binary"
 	"errors"
 	"net"
 	"net/netip"
+	"strconv"
 	"testing"
 	"time"
 
@@ -36,8 +38,6 @@ func TestSingBoxCapabilities(t *testing.T) {
 	}
 }
 
-
-
 type testConn struct {
 	closed bool
 	reads  [][]byte
@@ -60,17 +60,21 @@ func (c *testConn) Write(b []byte) (int, error) {
 	return len(b), nil
 }
 
-func (c *testConn) Close() error { c.closed = true; return nil }
-func (c *testConn) LocalAddr() net.Addr { return &net.TCPAddr{} }
-func (c *testConn) RemoteAddr() net.Addr { return &net.TCPAddr{} }
-func (c *testConn) SetDeadline(time.Time) error { return nil }
-func (c *testConn) SetReadDeadline(time.Time) error { return nil }
+func (c *testConn) Close() error                     { c.closed = true; return nil }
+func (c *testConn) LocalAddr() net.Addr              { return &net.TCPAddr{} }
+func (c *testConn) RemoteAddr() net.Addr             { return &net.TCPAddr{} }
+func (c *testConn) SetDeadline(time.Time) error      { return nil }
+func (c *testConn) SetReadDeadline(time.Time) error  { return nil }
 func (c *testConn) SetWriteDeadline(time.Time) error { return nil }
 
 func testInboundContext(uuid, ip string) adapter.InboundContext {
+	return testInboundContextWithPort(uuid, ip, 0)
+}
+
+func testInboundContextWithPort(uuid, ip string, port uint16) adapter.InboundContext {
 	return adapter.InboundContext{
 		User:   uuid,
-		Source: singM.Socksaddr{Addr: netip.MustParseAddr(ip)},
+		Source: singM.Socksaddr{Addr: netip.MustParseAddr(ip), Port: port},
 	}
 }
 
@@ -113,6 +117,47 @@ func TestConnTrackerRoutedConnectionTracksTrafficAndAliveIPs(t *testing.T) {
 	}
 	if connCount != 0 {
 		t.Fatalf("connCount after close = %d, want 0", connCount)
+	}
+}
+
+func TestConnTrackerUsesProxyProtocolSourceIP(t *testing.T) {
+	tracker := NewConnTracker(0)
+	tracker.SetUserMap(map[string]int{"uuid-1": 1})
+	sourcePort := uint16(45678)
+	proxySourceMap.Store(strconv.Itoa(int(sourcePort)), "1.2.3.4")
+	defer proxySourceMap.Delete(strconv.Itoa(int(sourcePort)))
+
+	base := &testConn{reads: [][]byte{[]byte("hello")}}
+	wrapped := tracker.RoutedConnection(context.Background(), base, testInboundContextWithPort("uuid-1", "127.0.0.1", sourcePort), nil, nil)
+	buf := make([]byte, 16)
+	if _, err := wrapped.Read(buf); err != nil {
+		t.Fatalf("Read() error = %v", err)
+	}
+
+	_, aliveIPs, _ := tracker.GetUserTraffic()
+	if !aliveIPs[1]["1.2.3.4"] {
+		t.Fatalf("aliveIPs = %v, want proxy protocol source IP", aliveIPs[1])
+	}
+	if aliveIPs[1]["127.0.0.1"] {
+		t.Fatalf("aliveIPs = %v, should not expose internal loopback source", aliveIPs[1])
+	}
+}
+
+func TestProxyProtocolSourceIPParsers(t *testing.T) {
+	if got := proxyV1SourceIP("PROXY TCP4 1.2.3.4 5.6.7.8 12345 443\r\n"); got != "1.2.3.4" {
+		t.Fatalf("proxyV1SourceIP() = %q, want 1.2.3.4", got)
+	}
+
+	header := append([]byte(nil), proxyV2Signature...)
+	header = append(header, 0x21, 0x11, 0, 12)
+	header = append(header, net.ParseIP("9.8.7.6").To4()...)
+	header = append(header, net.ParseIP("5.6.7.8").To4()...)
+	ports := make([]byte, 4)
+	binary.BigEndian.PutUint16(ports[0:2], 12345)
+	binary.BigEndian.PutUint16(ports[2:4], 443)
+	header = append(header, ports...)
+	if got := proxyV2SourceIP(header); got != "9.8.7.6" {
+		t.Fatalf("proxyV2SourceIP() = %q, want 9.8.7.6", got)
 	}
 }
 

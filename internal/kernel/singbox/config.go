@@ -19,6 +19,7 @@ import (
 type M = map[string]interface{}
 
 func buildConfig(kcfg config.KernelConfig, nc *model.NodeSpec, users []model.UserSpec, tc kernel.TLSCert) M {
+	nc = internalProxyTarget(nc)
 	var outbounds []M
 	tags := make(map[string]bool)
 
@@ -75,6 +76,16 @@ func buildConfig(kcfg config.KernelConfig, nc *model.NodeSpec, users []model.Use
 
 	mergeCustomSingbox(cfg, kcfg)
 	return cfg
+}
+
+func internalProxyTarget(nc *model.NodeSpec) *model.NodeSpec {
+	if nc == nil || !nc.GetProxyProtocol() {
+		return nc
+	}
+	clone := *nc
+	clone.ListenIP = "127.0.0.1"
+	clone.ServerPort = proxyProtocolInternalPort(nc.ServerPort)
+	return &clone
 }
 
 // outboundConfigToSingbox converts a structured OutboundConfig (from the panel)
@@ -435,6 +446,9 @@ func buildInbound(nc *model.NodeSpec, users []model.UserSpec, tc kernel.TLSCert)
 		"listen":      "::",
 		"listen_port": nc.ServerPort,
 	}
+	if nc.ListenIP != "" {
+		base["listen"] = nc.ListenIP
+	}
 
 	switch nc.Protocol {
 	case "shadowsocks":
@@ -532,6 +546,8 @@ func buildShadowsocks(base M, nc *model.NodeSpec, users []model.UserSpec) M {
 	if nc.Plugin != "" {
 		nlog.Core().Warn("sing-box shadowsocks inbound does not support plugin, ignoring", "plugin", nc.Plugin)
 	}
+
+	applyProxyProtocol(base, nc)
 
 	return base
 }
@@ -981,10 +997,8 @@ func applyMultiplex(base M, nc *model.NodeSpec) {
 }
 
 func applyProxyProtocol(base M, nc *model.NodeSpec) {
-	// if !nc.GetProxyProtocol() {
-	// 	return
-	// }
-	// base["proxy_protocol"] = true
+	// sing-box removed the inbound "proxy_protocol" option in 1.6.0.
+	// xboard-node handles PROXY protocol in an outer TCP forwarder instead.
 }
 
 // extractECHInbound extracts ECH config for sing-box server (inbound).

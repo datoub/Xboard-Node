@@ -210,7 +210,7 @@ func (t *ConnTracker) RoutedConnection(
 	_ adapter.Rule, _ adapter.Outbound,
 ) net.Conn {
 	uuid := metadata.User
-	sourceIP := metadata.Source.Addr.String()
+	sourceIP := proxiedSourceIP(metadata.Source.Port, metadata.Source.Addr.String())
 
 	t.usersMu.RLock()
 	uid := t.uuidMap[uuid]
