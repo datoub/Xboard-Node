@@ -28,6 +28,7 @@ DEFAULT_RELEASE_VERSION="latest"
 DEFAULT_LOG_LEVEL="info"
 DEFAULT_KERNEL_LOG_LEVEL="warn"
 DEFAULT_DOWNLOAD_BASE="https://github.com/datoub/Xboard-Node/releases"
+DEFAULT_RAW_DOWNLOAD_BASE="https://raw.githubusercontent.com/datoub/Xboard-Node/dev/dist"
 
 ACTION="${DEFAULT_ACTION}"
 MODE=""
@@ -489,6 +490,25 @@ resolve_download_url() {
     fi
 }
 
+download_artifact() {
+    local artifact="$1"
+    local destination="$2"
+    resolve_download_url "$artifact"
+    log_step "Downloading ${artifact}: ${DOWNLOAD_URL}"
+    if curl -fsSL "$DOWNLOAD_URL" -o "$destination"; then
+        return 0
+    fi
+    if [ "$RELEASE_VERSION" = "latest" ]; then
+        local raw_url="${DEFAULT_RAW_DOWNLOAD_BASE}/${artifact}"
+        log_warn "Release asset unavailable, falling back to raw branch artifact: ${raw_url}"
+        if curl -fsSL "$raw_url" -o "$destination"; then
+            return 0
+        fi
+    fi
+    log_error "Failed to download ${artifact}"
+    return 1
+}
+
 stage_binary() {
     local staged="$TMP_DIR/xboard-node"
     local local_src
@@ -497,10 +517,7 @@ stage_binary() {
         log_step "Using local binary: ${local_src}"
         cp "$local_src" "$staged"
     else
-        resolve_download_url "xboard-node-linux-${ARCH}"
-        log_step "Downloading binary: ${DOWNLOAD_URL}"
-        if ! curl -fsSL "$DOWNLOAD_URL" -o "$staged"; then
-            log_error "Failed to download binary from ${DOWNLOAD_URL}"
+        if ! download_artifact "xboard-node-linux-${ARCH}" "$staged"; then
             exit 1
         fi
     fi
@@ -529,10 +546,7 @@ stage_xbctl() {
         log_step "Using local xbctl binary: ${local_src}"
         cp "$local_src" "$staged"
     else
-        resolve_download_url "xbctl-linux-${ARCH}"
-        log_step "Downloading xbctl: ${DOWNLOAD_URL}"
-        if ! curl -fsSL "$DOWNLOAD_URL" -o "$staged"; then
-            log_error "Failed to download xbctl from ${DOWNLOAD_URL}"
+        if ! download_artifact "xbctl-linux-${ARCH}" "$staged"; then
             exit 1
         fi
     fi
