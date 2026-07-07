@@ -28,7 +28,7 @@ DEFAULT_RELEASE_VERSION="latest"
 DEFAULT_LOG_LEVEL="info"
 DEFAULT_KERNEL_LOG_LEVEL="warn"
 DEFAULT_DOWNLOAD_BASE="https://github.com/datoub/Xboard-Node/releases"
-DEFAULT_RAW_DOWNLOAD_BASE="https://raw.githubusercontent.com/datoub/Xboard-Node/dev/dist"
+DEFAULT_RAW_DOWNLOAD_BASE="https://github.com/datoub/Xboard-Node/raw/dev/dist"
 
 ACTION="${DEFAULT_ACTION}"
 MODE=""
