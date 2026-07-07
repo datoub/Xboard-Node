@@ -948,6 +948,7 @@ func (s *Service) trackAndEnforce(ctx context.Context) {
 	}
 
 	s.tracker.Process(traffic, aliveIPs, connCount)
+	s.speedTracker.ObserveTraffic(s.tracker.LastTrafficDelta(), time.Duration(s.cfg.Node.TrackInterval)*time.Second, time.Now())
 
 	// Only log stats if there's actual traffic or connections
 	if connCount > 0 || len(traffic) > 0 {
@@ -1055,8 +1056,9 @@ func (s *Service) buildMetrics(status monitor.Status) map[string]interface{} {
 
 	// Speed Limiter metrics
 	m["speed_limiter"] = map[string]interface{}{
-		"has_limits":    s.speedTracker.HasLimits(),
-		"limited_users": s.speedTracker.LimitedUserCount(),
+		"has_limits":            s.speedTracker.HasLimits(),
+		"limited_users":         s.speedTracker.LimitedUserCount(),
+		"dynamic_limited_users": s.speedTracker.DynamicLimitedUserCount(),
 	}
 
 	// GC metrics.
@@ -1083,8 +1085,9 @@ func (s *Service) buildMetrics(status monitor.Status) map[string]interface{} {
 	// Limiter metrics.
 	lm := s.limiter.SnapshotMetrics()
 	m["limits"] = map[string]interface{}{
-		"device_limit_events": lm.DeviceLimitEvents,
-		"speed_limited_users": s.speedTracker.LimitedUserCount(),
+		"device_limit_events":         lm.DeviceLimitEvents,
+		"speed_limited_users":         s.speedTracker.LimitedUserCount(),
+		"dynamic_speed_limited_users": s.speedTracker.DynamicLimitedUserCount(),
 	}
 
 	return m

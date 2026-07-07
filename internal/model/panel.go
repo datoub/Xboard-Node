@@ -139,7 +139,13 @@ func UserSpecsFromPanel(users []panel.User) []UserSpec {
 	}
 	out := make([]UserSpec, 0, len(users))
 	for _, user := range users {
-		out = append(out, UserSpec{ID: user.ID, UUID: user.UUID, SpeedLimit: user.SpeedLimit, DeviceLimit: user.DeviceLimit})
+		out = append(out, UserSpec{
+			ID:                user.ID,
+			UUID:              user.UUID,
+			SpeedLimit:        user.SpeedLimit,
+			DeviceLimit:       user.DeviceLimit,
+			DynamicSpeedLimit: dynamicPolicyFromPanel(user.DynamicSpeedLimit),
+		})
 	}
 	return out
 }
@@ -270,7 +276,63 @@ func UserSpecsToPanel(users []UserSpec) []panel.User {
 	}
 	out := make([]panel.User, 0, len(users))
 	for _, user := range users {
-		out = append(out, panel.User{ID: user.ID, UUID: user.UUID, SpeedLimit: user.SpeedLimit, DeviceLimit: user.DeviceLimit})
+		out = append(out, panel.User{
+			ID:                user.ID,
+			UUID:              user.UUID,
+			SpeedLimit:        user.SpeedLimit,
+			DeviceLimit:       user.DeviceLimit,
+			DynamicSpeedLimit: dynamicPolicyToPanel(user.DynamicSpeedLimit),
+		})
+	}
+	return out
+}
+
+func dynamicPolicyFromPanel(policy *panel.DynamicSpeedPolicy) *DynamicSpeedPolicy {
+	if policy == nil {
+		return nil
+	}
+	return &DynamicSpeedPolicy{
+		Enabled:         policy.Enabled,
+		ThresholdMbps:   policy.ThresholdMbps,
+		TriggerSeconds:  policy.TriggerSeconds,
+		LimitMbps:       policy.LimitMbps,
+		RecoverySeconds: policy.RecoverySeconds,
+		TimeRanges:      timeRangesFromPanel(policy.TimeRanges),
+	}
+}
+
+func dynamicPolicyToPanel(policy *DynamicSpeedPolicy) *panel.DynamicSpeedPolicy {
+	if policy == nil {
+		return nil
+	}
+	return &panel.DynamicSpeedPolicy{
+		Enabled:         policy.Enabled,
+		ThresholdMbps:   policy.ThresholdMbps,
+		TriggerSeconds:  policy.TriggerSeconds,
+		LimitMbps:       policy.LimitMbps,
+		RecoverySeconds: policy.RecoverySeconds,
+		TimeRanges:      timeRangesToPanel(policy.TimeRanges),
+	}
+}
+
+func timeRangesFromPanel(ranges []panel.TimeRange) []TimeRange {
+	if len(ranges) == 0 {
+		return nil
+	}
+	out := make([]TimeRange, 0, len(ranges))
+	for _, r := range ranges {
+		out = append(out, TimeRange{Start: r.Start, End: r.End})
+	}
+	return out
+}
+
+func timeRangesToPanel(ranges []TimeRange) []panel.TimeRange {
+	if len(ranges) == 0 {
+		return nil
+	}
+	out := make([]panel.TimeRange, 0, len(ranges))
+	for _, r := range ranges {
+		out = append(out, panel.TimeRange{Start: r.Start, End: r.End})
 	}
 	return out
 }

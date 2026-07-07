@@ -78,10 +78,25 @@ type BrutalConfig struct {
 }
 
 type UserSpec struct {
-	ID          int
-	UUID        string
-	SpeedLimit  int
-	DeviceLimit int
+	ID                int
+	UUID              string
+	SpeedLimit        int
+	DeviceLimit       int
+	DynamicSpeedLimit *DynamicSpeedPolicy
+}
+
+type DynamicSpeedPolicy struct {
+	Enabled         bool
+	ThresholdMbps   int
+	TriggerSeconds  int
+	LimitMbps       int
+	RecoverySeconds int
+	TimeRanges      []TimeRange
+}
+
+type TimeRange struct {
+	Start string
+	End   string
 }
 
 func (n *NodeSpec) GetProxyProtocol() bool {

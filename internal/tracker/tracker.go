@@ -14,6 +14,7 @@ import (
 // It is swapped atomically so readers never block writers.
 type snapshot struct {
 	traffic   map[int][2]int64        // userID → [upload, download] delta
+	cycle     map[int][2]int64        // userID → [upload, download] delta for the last Process tick
 	aliveIPs  map[int]map[string]bool // userID → set of source IPs
 	online    map[int]int             // userID → distinct IP count
 	connCount int
@@ -66,6 +67,7 @@ func New() *Tracker {
 	// Publish initial empty snapshot.
 	t.live.Store(&snapshot{
 		traffic:  make(map[int][2]int64),
+		cycle:    make(map[int][2]int64),
 		aliveIPs: make(map[int]map[string]bool),
 		online:   make(map[int]int),
 	})
@@ -86,6 +88,7 @@ func (t *Tracker) Process(
 	defer t.mu.Unlock()
 
 	var cycleIn, cycleOut int64
+	cycleTraffic := make(map[int][2]int64, len(cumTraffic))
 
 	for uid, cum := range cumTraffic {
 		prev := t.lastSeen[uid]
@@ -103,6 +106,7 @@ func (t *Tracker) Process(
 		t.lastSeen[uid] = cum
 
 		if deltaUp > 0 || deltaDown > 0 {
+			cycleTraffic[uid] = [2]int64{deltaUp, deltaDown}
 			cur := t.pendingTraffic[uid]
 			cur[0] += deltaUp
 			cur[1] += deltaDown
@@ -122,12 +126,20 @@ func (t *Tracker) Process(
 	// Publish new snapshot (readers will see this atomically).
 	t.live.Store(&snapshot{
 		traffic:   copyTrafficMap(t.pendingTraffic),
+		cycle:     cycleTraffic,
 		aliveIPs:  kernelAliveIPs, // kernel provides fresh copy each tick
 		online:    online,
 		connCount: connCount,
 		inSpeed:   cycleIn,
 		outSpeed:  cycleOut,
 	})
+}
+
+// LastTrafficDelta returns per-user traffic deltas observed during the last
+// Process tick. Callers use it for local enforcement decisions; it does not
+// drain or alter pending traffic used for panel reporting.
+func (t *Tracker) LastTrafficDelta() map[int][2]int64 {
+	return copyTrafficMap(t.live.Load().cycle)
 }
 
 // FlushTraffic returns accumulated per-user traffic and resets the pending buffer.

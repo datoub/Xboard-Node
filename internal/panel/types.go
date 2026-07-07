@@ -71,8 +71,8 @@ type MachineNode struct {
 
 // MachineNodesResponse is the response from GET /api/v2/server/machine/nodes.
 type MachineNodesResponse struct {
-	Nodes      []MachineNode      `json:"nodes"`
-	BaseConfig MachineBaseConfig  `json:"base_config"`
+	Nodes      []MachineNode     `json:"nodes"`
+	BaseConfig MachineBaseConfig `json:"base_config"`
 }
 
 // MachineBaseConfig holds polling intervals for machine mode.
@@ -253,12 +253,27 @@ type RouteAction struct {
 
 // User represents a user returned by the panel
 type User struct {
-	ID          int    `json:"id"`
-	UUID        string `json:"uuid"`
-	SpeedLimit  int    `json:"speed_limit"`  // Mbps, 0 = unlimited
-	DeviceLimit int    `json:"device_limit"` // max devices, 0 = unlimited
+	ID                int                 `json:"id"`
+	UUID              string              `json:"uuid"`
+	SpeedLimit        int                 `json:"speed_limit"`  // Mbps, 0 = unlimited
+	DeviceLimit       int                 `json:"device_limit"` // max devices, 0 = unlimited
+	DynamicSpeedLimit *DynamicSpeedPolicy `json:"dynamic_speed_limit,omitempty"`
 }
 
 type UsersResponse struct {
 	Users []User `json:"users"`
+}
+
+type DynamicSpeedPolicy struct {
+	Enabled         bool        `json:"enabled"`
+	ThresholdMbps   int         `json:"threshold_mbps"`
+	TriggerSeconds  int         `json:"trigger_seconds"`
+	LimitMbps       int         `json:"limit_mbps"`
+	RecoverySeconds int         `json:"recovery_seconds"`
+	TimeRanges      []TimeRange `json:"time_ranges,omitempty"`
+}
+
+type TimeRange struct {
+	Start string `json:"start"`
+	End   string `json:"end"`
 }

@@ -145,3 +145,69 @@ func TestSpeedTracker_UpdateBuckets_LogCallbackMayCallLimitedUserCount(t *testin
 		t.Fatal("deadlock: UpdateBuckets did not finish (log callback vs RWMutex)")
 	}
 }
+
+func TestSpeedTracker_DynamicSpeedLimitTriggersAndRecovers(t *testing.T) {
+	l := New()
+	st := NewSpeedTracker(l)
+	l.UpdateUsers([]model.UserSpec{{
+		ID:         1,
+		UUID:       "u1",
+		SpeedLimit: 0,
+		DynamicSpeedLimit: &model.DynamicSpeedPolicy{
+			Enabled:         true,
+			ThresholdMbps:   10,
+			TriggerSeconds:  20,
+			LimitMbps:       2,
+			RecoverySeconds: 20,
+		},
+	}})
+	st.UpdateBuckets()
+
+	now := time.Date(2026, 7, 8, 12, 0, 0, 0, time.UTC)
+	// 20 Mbps for two 10s samples crosses the 20s trigger window.
+	heavy10s := map[int][2]int64{1: {0, 25_000_000}}
+	st.ObserveTraffic(heavy10s, 10*time.Second, now)
+	if lim := st.GetLimiter("u1"); lim != nil {
+		t.Fatal("dynamic limiter should not trigger before trigger_seconds")
+	}
+	st.ObserveTraffic(heavy10s, 10*time.Second, now.Add(10*time.Second))
+	lim := st.GetLimiter("u1")
+	if lim == nil {
+		t.Fatal("expected dynamic limiter after sustained high bandwidth")
+	}
+	if got, want := float64(lim.Limit()), float64(2*1_000_000/8); got != want {
+		t.Fatalf("dynamic limiter rate = %v, want %v", got, want)
+	}
+
+	idle10s := map[int][2]int64{1: {0, 1}}
+	st.ObserveTraffic(idle10s, 10*time.Second, now.Add(20*time.Second))
+	if st.GetLimiter("u1") == nil {
+		t.Fatal("dynamic limiter should remain during recovery window")
+	}
+	st.ObserveTraffic(idle10s, 10*time.Second, now.Add(30*time.Second))
+	if st.GetLimiter("u1") != nil {
+		t.Fatal("dynamic limiter should recover after low bandwidth recovery window")
+	}
+}
+
+func TestSpeedTracker_DynamicSpeedLimitRespectsTimeRanges(t *testing.T) {
+	l := New()
+	st := NewSpeedTracker(l)
+	l.UpdateUsers([]model.UserSpec{{
+		ID:   1,
+		UUID: "u1",
+		DynamicSpeedLimit: &model.DynamicSpeedPolicy{
+			Enabled:        true,
+			ThresholdMbps:  1,
+			TriggerSeconds: 10,
+			LimitMbps:      1,
+			TimeRanges:     []model.TimeRange{{Start: "23:00", End: "23:59"}},
+		},
+	}})
+	st.UpdateBuckets()
+
+	st.ObserveTraffic(map[int][2]int64{1: {0, 10_000_000}}, 10*time.Second, time.Date(2026, 7, 8, 12, 0, 0, 0, time.UTC))
+	if st.GetLimiter("u1") != nil {
+		t.Fatal("dynamic limiter should not trigger outside policy time range")
+	}
+}

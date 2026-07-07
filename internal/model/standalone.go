@@ -103,7 +103,38 @@ func UserSpecsFromStandalone(cfg *config.Config) []UserSpec {
 	}
 	users := make([]UserSpec, 0, len(cfg.Standalone.Users))
 	for _, user := range cfg.Standalone.Users {
-		users = append(users, UserSpec{ID: user.ID, UUID: user.UUID, SpeedLimit: user.SpeedLimit, DeviceLimit: user.DeviceLimit})
+		users = append(users, UserSpec{
+			ID:                user.ID,
+			UUID:              user.UUID,
+			SpeedLimit:        user.SpeedLimit,
+			DeviceLimit:       user.DeviceLimit,
+			DynamicSpeedLimit: dynamicPolicyFromStandalone(user.DynamicSpeedLimit),
+		})
 	}
 	return users
+}
+
+func dynamicPolicyFromStandalone(policy *config.StandaloneSpeedPolicy) *DynamicSpeedPolicy {
+	if policy == nil {
+		return nil
+	}
+	return &DynamicSpeedPolicy{
+		Enabled:         policy.Enabled,
+		ThresholdMbps:   policy.ThresholdMbps,
+		TriggerSeconds:  policy.TriggerSeconds,
+		LimitMbps:       policy.LimitMbps,
+		RecoverySeconds: policy.RecoverySeconds,
+		TimeRanges:      timeRangesFromStandalone(policy.TimeRanges),
+	}
+}
+
+func timeRangesFromStandalone(ranges []config.StandaloneTimeRange) []TimeRange {
+	if len(ranges) == 0 {
+		return nil
+	}
+	out := make([]TimeRange, 0, len(ranges))
+	for _, r := range ranges {
+		out = append(out, TimeRange{Start: r.Start, End: r.End})
+	}
+	return out
 }

@@ -184,6 +184,21 @@ func TestFlushAliveIPs_DedupSameIP(t *testing.T) {
 	}
 }
 
+func TestLastTrafficDeltaReturnsOnlyLastProcessCycle(t *testing.T) {
+	tr := New()
+	tr.Process(map[int][2]int64{1: {100, 200}}, nil, 1)
+	first := tr.LastTrafficDelta()
+	if got := first[1]; got != [2]int64{100, 200} {
+		t.Fatalf("first delta = %v, want [100 200]", got)
+	}
+
+	tr.Process(map[int][2]int64{1: {150, 260}}, nil, 1)
+	second := tr.LastTrafficDelta()
+	if got := second[1]; got != [2]int64{50, 60} {
+		t.Fatalf("second delta = %v, want [50 60]", got)
+	}
+}
+
 func TestHasTraffic(t *testing.T) {
 	tr := New()
 	if tr.HasTraffic() {

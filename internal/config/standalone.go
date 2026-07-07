@@ -97,10 +97,25 @@ type StandaloneBrutalConfig struct {
 }
 
 type StandaloneUser struct {
-	ID          int    `yaml:"id"`
-	UUID        string `yaml:"uuid"`
-	SpeedLimit  int    `yaml:"speed_limit,omitempty"`
-	DeviceLimit int    `yaml:"device_limit,omitempty"`
+	ID                int                    `yaml:"id"`
+	UUID              string                 `yaml:"uuid"`
+	SpeedLimit        int                    `yaml:"speed_limit,omitempty"`
+	DeviceLimit       int                    `yaml:"device_limit,omitempty"`
+	DynamicSpeedLimit *StandaloneSpeedPolicy `yaml:"dynamic_speed_limit,omitempty"`
+}
+
+type StandaloneSpeedPolicy struct {
+	Enabled         bool                  `yaml:"enabled"`
+	ThresholdMbps   int                   `yaml:"threshold_mbps"`
+	TriggerSeconds  int                   `yaml:"trigger_seconds"`
+	LimitMbps       int                   `yaml:"limit_mbps"`
+	RecoverySeconds int                   `yaml:"recovery_seconds"`
+	TimeRanges      []StandaloneTimeRange `yaml:"time_ranges,omitempty"`
+}
+
+type StandaloneTimeRange struct {
+	Start string `yaml:"start"`
+	End   string `yaml:"end"`
 }
 
 func (c *Config) IsStandalone() bool {
