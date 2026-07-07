@@ -210,6 +210,34 @@ func (t *Tracker) FlushAliveIPs() map[int][]string {
 	return t.aliveIPsBuf
 }
 
+// SnapshotAliveIPs returns the current per-user alive IP snapshot.
+// Unlike FlushAliveIPs it does not suppress unchanged snapshots, because
+// device state stores often rely on repeated reports to refresh TTL.
+func (t *Tracker) SnapshotAliveIPs() map[int][]string {
+	s := t.live.Load()
+
+	t.mu.Lock()
+	defer t.mu.Unlock()
+
+	for k := range t.aliveIPsBuf {
+		delete(t.aliveIPsBuf, k)
+	}
+
+	for uid, ips := range s.aliveIPs {
+		buf := t.aliveIPsBuf[uid]
+		if buf == nil {
+			buf = make([]string, 0, len(ips))
+		}
+		buf = buf[:0]
+		for ip := range ips {
+			buf = append(buf, ip)
+		}
+		t.aliveIPsBuf[uid] = buf
+	}
+
+	return t.aliveIPsBuf
+}
+
 // calcAliveIPsHash computes a deterministic hash for change detection.
 func calcAliveIPsHash(aliveIPs map[int]map[string]bool) string {
 	if len(aliveIPs) == 0 {

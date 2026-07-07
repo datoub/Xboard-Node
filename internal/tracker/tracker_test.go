@@ -171,6 +171,24 @@ func TestFlushAliveIPs(t *testing.T) {
 	}
 }
 
+func TestSnapshotAliveIPsRepeatsUnchangedState(t *testing.T) {
+	tr := New()
+	aliveIPs := map[int]map[string]bool{
+		1: {"1.1.1.1": true},
+	}
+	tr.Process(map[int][2]int64{1: {100, 200}}, aliveIPs, 1)
+
+	first := tr.SnapshotAliveIPs()
+	if len(first[1]) != 1 || first[1][0] != "1.1.1.1" {
+		t.Fatalf("first snapshot = %v", first)
+	}
+
+	second := tr.SnapshotAliveIPs()
+	if len(second[1]) != 1 || second[1][0] != "1.1.1.1" {
+		t.Fatalf("second snapshot = %v", second)
+	}
+}
+
 func TestFlushAliveIPs_DedupSameIP(t *testing.T) {
 	tr := New()
 	aliveIPs := map[int]map[string]bool{

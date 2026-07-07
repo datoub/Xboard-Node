@@ -977,7 +977,7 @@ func (s *Service) pushReportAsync() {
 	}
 
 	traffic := s.tracker.FlushTraffic()
-	aliveIPs := s.tracker.FlushAliveIPs()
+	aliveIPs := s.tracker.SnapshotAliveIPs()
 	online := s.tracker.CurrentOnline()
 	status := monitor.Collect()
 	metrics := s.buildMetrics(status)
@@ -1007,7 +1007,7 @@ func (s *Service) pushReportSync() {
 		return
 	}
 	traffic := s.tracker.FlushTraffic()
-	aliveIPs := s.tracker.FlushAliveIPs()
+	aliveIPs := s.tracker.SnapshotAliveIPs()
 	online := s.tracker.CurrentOnline()
 	status := monitor.Collect()
 	metrics := s.buildMetrics(status)
@@ -1137,12 +1137,7 @@ func (s *Service) sendDeviceBatch() {
 		return
 	}
 
-	devices := s.tracker.FlushAliveIPs()
-	// FlushAliveIPs returns nil if no changes since last flush
-	if devices == nil {
-		nlog.Core().Debug("device snapshot unchanged, skipping")
-		return
-	}
+	devices := s.tracker.SnapshotAliveIPs()
 	s.sink.ReportDevices(s.wsClient, devices)
 	nlog.Core().Debug("device snapshot sent", "users", len(devices))
 }
