@@ -43,6 +43,8 @@ HEALTH_PORT="${DEFAULT_HEALTH_PORT}"
 HEALTH_ENABLED=1
 RUNTIME_GOMEMLIMIT=""
 RUNTIME_GOGC=""
+ALLOW_PRIVATE_CIDRS=()
+DISABLE_PRIVATE_BLOCK=0
 BINARY_SOURCE=""
 CLI_BINARY_SOURCE=""
 FORCE_RECONFIGURE=0
@@ -191,6 +193,8 @@ usage() {
     --binary            Use a local xboard-node binary path instead of downloading
     --xbctl-binary      Use a local xbctl binary path instead of downloading
     --health-port       Local health port (default: 65530, use 0 to disable)
+    --allow-private-cidr CIDR to route direct before private-network block; repeatable
+    --disable-private-block Disable default RFC1918/link-local block
     --gomemlimit        Runtime GOMEMLIMIT value, e.g. 256MiB
     --gogc              Runtime GOGC value, e.g. 50
     --force-reconfigure Overwrite an existing install even if mode/target changed
@@ -257,6 +261,14 @@ parse_args() {
             --health-port)
                 HEALTH_PORT="$2"
                 shift 2
+                ;;
+            --allow-private-cidr)
+                ALLOW_PRIVATE_CIDRS+=("$2")
+                shift 2
+                ;;
+            --disable-private-block)
+                DISABLE_PRIVATE_BLOCK=1
+                shift
                 ;;
             --gomemlimit)
                 RUNTIME_GOMEMLIMIT="$2"
@@ -590,6 +602,12 @@ render_config() {
     fi
     if [ -n "$RUNTIME_GOGC" ] && [ "$RUNTIME_GOGC" -gt 0 ] 2>/dev/null; then
         init_args+=(--gogc "$RUNTIME_GOGC")
+    fi
+    for cidr in "${ALLOW_PRIVATE_CIDRS[@]}"; do
+        init_args+=(--allow-private-cidr "$cidr")
+    done
+    if [ "$DISABLE_PRIVATE_BLOCK" -eq 1 ]; then
+        init_args+=(--disable-private-block)
     fi
 
     local output

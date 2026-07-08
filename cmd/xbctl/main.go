@@ -54,7 +54,7 @@ type fileRootConfig struct {
 	WS        *config.WSConfig   `yaml:"ws,omitempty"`
 	Runtime   *fileRuntimeConfig `yaml:"runtime,omitempty"`
 	Cert      *config.CertConfig `yaml:"cert,omitempty"`
-	Instances []fileInstance      `yaml:"instances,omitempty"`
+	Instances []fileInstance     `yaml:"instances,omitempty"`
 }
 
 type fileInstance struct {
@@ -92,13 +92,15 @@ type fileNodeConfig struct {
 }
 
 type fileKernelConfig struct {
-	Type         string           `yaml:"type"`
-	ConfigDir    string           `yaml:"config_dir"`
-	LogLevel     string           `yaml:"log_level,omitempty"`
-	GeoDataDir   string           `yaml:"geo_data_dir,omitempty"`
-	CustomConfig string           `yaml:"custom_config,omitempty"`
-	CustomRoute  []map[string]any `yaml:"custom_route,omitempty"`
-	CustomOut    []map[string]any `yaml:"custom_outbound,omitempty"`
+	Type                string           `yaml:"type"`
+	ConfigDir           string           `yaml:"config_dir"`
+	LogLevel            string           `yaml:"log_level,omitempty"`
+	GeoDataDir          string           `yaml:"geo_data_dir,omitempty"`
+	AllowPrivateCIDRs   []string         `yaml:"allow_private_cidrs,omitempty"`
+	DisablePrivateBlock bool             `yaml:"disable_private_block,omitempty"`
+	CustomConfig        string           `yaml:"custom_config,omitempty"`
+	CustomRoute         []map[string]any `yaml:"custom_route,omitempty"`
+	CustomOut           []map[string]any `yaml:"custom_outbound,omitempty"`
 }
 
 type fileLogConfig struct {
@@ -849,8 +851,13 @@ func writeRootConfig(path string, root *config.RootConfig) error {
 	if p.Log.Level != "" || p.Log.Output != "" {
 		out.Log = &fileLogConfig{Level: p.Log.Level, Output: p.Log.Output}
 	}
-	if p.Kernel.Type != "" || p.Kernel.LogLevel != "" {
-		out.Kernel = &fileKernelConfig{Type: p.Kernel.Type, LogLevel: p.Kernel.LogLevel}
+	if p.Kernel.Type != "" || p.Kernel.LogLevel != "" || len(p.Kernel.AllowPrivateCIDRs) > 0 || p.Kernel.DisablePrivateBlock {
+		out.Kernel = &fileKernelConfig{
+			Type:                p.Kernel.Type,
+			LogLevel:            p.Kernel.LogLevel,
+			AllowPrivateCIDRs:   p.Kernel.AllowPrivateCIDRs,
+			DisablePrivateBlock: p.Kernel.DisablePrivateBlock,
+		}
 	}
 	if p.Node.PushInterval != 0 || p.Node.PullInterval != 0 || p.Node.TrackInterval != 0 || p.Node.DeviceReportInterval != 0 {
 		out.Node = &fileNodeConfig{
@@ -880,13 +887,15 @@ func writeRootConfig(path string, root *config.RootConfig) error {
 				NodeType: inst.Panel.NodeType,
 			},
 			Kernel: fileKernelConfig{
-				Type:         inst.Kernel.Type,
-				ConfigDir:    inst.Kernel.ConfigDir,
-				LogLevel:     inst.Kernel.LogLevel,
-				GeoDataDir:   inst.Kernel.GeoDataDir,
-				CustomConfig: inst.Kernel.CustomConfig,
-				CustomRoute:  inst.Kernel.CustomRoute,
-				CustomOut:    inst.Kernel.CustomOutbound,
+				Type:                inst.Kernel.Type,
+				ConfigDir:           inst.Kernel.ConfigDir,
+				LogLevel:            inst.Kernel.LogLevel,
+				GeoDataDir:          inst.Kernel.GeoDataDir,
+				AllowPrivateCIDRs:   inst.Kernel.AllowPrivateCIDRs,
+				DisablePrivateBlock: inst.Kernel.DisablePrivateBlock,
+				CustomConfig:        inst.Kernel.CustomConfig,
+				CustomRoute:         inst.Kernel.CustomRoute,
+				CustomOut:           inst.Kernel.CustomOutbound,
 			},
 			Log: fileLogConfig{
 				Level:  inst.Log.Level,
@@ -1230,35 +1239,58 @@ func runConfigInit(args []string) error {
 		installRoot    string
 		token          string
 		releaseVersion string
+		allowPrivate   []string
+		disablePrivate bool
 	)
 
 	for i := 0; i < len(args); i++ {
-		if i+1 >= len(args) {
-			break
-		}
 		switch args[i] {
 		case "--config":
+			if i+1 >= len(args) {
+				return errors.New("missing value for --config")
+			}
 			i++
 			configIn = args[i]
 		case "--output":
+			if i+1 >= len(args) {
+				return errors.New("missing value for --output")
+			}
 			i++
 			configOut = args[i]
 		case "--credentials-in":
+			if i+1 >= len(args) {
+				return errors.New("missing value for --credentials-in")
+			}
 			i++
 			credentialsIn = args[i]
 		case "--credentials-out":
+			if i+1 >= len(args) {
+				return errors.New("missing value for --credentials-out")
+			}
 			i++
 			credentialsOut = args[i]
 		case "--meta":
+			if i+1 >= len(args) {
+				return errors.New("missing value for --meta")
+			}
 			i++
 			metaPath = args[i]
 		case "--mode":
+			if i+1 >= len(args) {
+				return errors.New("missing value for --mode")
+			}
 			i++
 			mode = args[i]
 		case "--panel-url":
+			if i+1 >= len(args) {
+				return errors.New("missing value for --panel-url")
+			}
 			i++
 			panelURL = args[i]
 		case "--node-id":
+			if i+1 >= len(args) {
+				return errors.New("missing value for --node-id")
+			}
 			i++
 			v, err := strconv.Atoi(args[i])
 			if err != nil {
@@ -1266,9 +1298,15 @@ func runConfigInit(args []string) error {
 			}
 			nodeID = v
 		case "--node-type":
+			if i+1 >= len(args) {
+				return errors.New("missing value for --node-type")
+			}
 			i++
 			nodeType = args[i]
 		case "--machine-id":
+			if i+1 >= len(args) {
+				return errors.New("missing value for --machine-id")
+			}
 			i++
 			v, err := strconv.Atoi(args[i])
 			if err != nil {
@@ -1276,9 +1314,15 @@ func runConfigInit(args []string) error {
 			}
 			machineID = v
 		case "--kernel":
+			if i+1 >= len(args) {
+				return errors.New("missing value for --kernel")
+			}
 			i++
 			kernelType = args[i]
 		case "--health-port":
+			if i+1 >= len(args) {
+				return errors.New("missing value for --health-port")
+			}
 			i++
 			v, err := strconv.Atoi(args[i])
 			if err != nil {
@@ -1286,22 +1330,48 @@ func runConfigInit(args []string) error {
 			}
 			healthPort = v
 		case "--gomemlimit":
+			if i+1 >= len(args) {
+				return errors.New("missing value for --gomemlimit")
+			}
 			i++
 			gomemlimit = args[i]
 		case "--gogc":
+			if i+1 >= len(args) {
+				return errors.New("missing value for --gogc")
+			}
 			i++
 			v, err := strconv.Atoi(args[i])
 			if err != nil {
 				return fmt.Errorf("invalid --gogc: %w", err)
 			}
 			gogc = v
+		case "--allow-private-cidr":
+			if i+1 >= len(args) {
+				return errors.New("missing value for --allow-private-cidr")
+			}
+			i++
+			cidr := strings.TrimSpace(args[i])
+			if cidr != "" {
+				allowPrivate = append(allowPrivate, cidr)
+			}
+		case "--disable-private-block":
+			disablePrivate = true
 		case "--install-root":
+			if i+1 >= len(args) {
+				return errors.New("missing value for --install-root")
+			}
 			i++
 			installRoot = args[i]
 		case "--token":
+			if i+1 >= len(args) {
+				return errors.New("missing value for --token")
+			}
 			i++
 			token = args[i]
 		case "--version":
+			if i+1 >= len(args) {
+				return errors.New("missing value for --version")
+			}
 			i++
 			releaseVersion = args[i]
 		}
@@ -1324,8 +1394,10 @@ func runConfigInit(args []string) error {
 	inst := config.Config{
 		Panel: config.PanelConfig{URL: panelURL},
 		Kernel: config.KernelConfig{
-			Type:     kernelType,
-			LogLevel: "warn",
+			Type:                kernelType,
+			LogLevel:            "warn",
+			AllowPrivateCIDRs:   allowPrivate,
+			DisablePrivateBlock: disablePrivate,
 		},
 		Log:        config.LogConfig{Level: "info", Output: "stdout"},
 		HealthPort: healthPort,
