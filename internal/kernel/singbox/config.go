@@ -60,7 +60,7 @@ func buildConfig(kcfg config.KernelConfig, nc *model.NodeSpec, users []model.Use
 	}
 
 	// Merge panel routes and static config routes
-	cfg["route"] = buildRoutes(nc.Routes, nc.CustomRouteRules, mergeRouteList(nc.CustomRoutes, kcfg.CustomRoute))
+	cfg["route"] = buildRoutes(nc.Routes, nc.CustomRouteRules, mergeRouteList(nc.CustomRoutes, kcfg.CustomRoute), kcfg)
 
 	// Automatically enable rule_set caching (cache_file) when panel routes
 	// reference geoip:/geosite: entries so that the downloaded .srs rule_set
@@ -178,8 +178,9 @@ func mergeRouteList(a, b []map[string]any) []map[string]any {
 	return res
 }
 
-func buildRoutes(panelRoutes []model.RouteRule, customRules []model.CustomRouteRule, custom []map[string]any) M {
+func buildRoutes(panelRoutes []model.RouteRule, customRules []model.CustomRouteRule, custom []map[string]any, kcfg ...config.KernelConfig) M {
 	var rules []M
+	routeCfg := routeKernelConfig(kcfg...)
 
 	// Structured custom routes now take the highest priority for panel-managed overrides.
 	for _, rule := range customRules {
@@ -194,30 +195,39 @@ func buildRoutes(panelRoutes []model.RouteRule, customRules []model.CustomRouteR
 		rules = append(rules, M(cr))
 	}
 
-	// Standard blocks for private IPv4 and IPv6 ranges to prevent SSRF.
-	rules = append(rules,
-		M{
-			"outbound": "block",
-			"ip_cidr": []string{
-				"10.0.0.0/8",
-				"100.64.0.0/10",
-				"127.0.0.0/8",
-				"169.254.0.0/16",
-				"172.16.0.0/12",
-				"192.0.0.0/24",
-				"192.168.0.0/16",
-				"198.18.0.0/15",
+	if allowed := cleanedCIDRs(routeCfg.AllowPrivateCIDRs); len(allowed) > 0 {
+		rules = append(rules, M{
+			"outbound": "direct",
+			"ip_cidr":  allowed,
+		})
+	}
+
+	if !routeCfg.DisablePrivateBlock {
+		// Standard blocks for private IPv4 and IPv6 ranges to prevent SSRF.
+		rules = append(rules,
+			M{
+				"outbound": "block",
+				"ip_cidr": []string{
+					"10.0.0.0/8",
+					"100.64.0.0/10",
+					"127.0.0.0/8",
+					"169.254.0.0/16",
+					"172.16.0.0/12",
+					"192.0.0.0/24",
+					"192.168.0.0/16",
+					"198.18.0.0/15",
+				},
 			},
-		},
-		M{
-			"outbound": "block",
-			"ip_cidr": []string{
-				"fc00::/7",
-				"fe80::/10",
-				"::1/128",
+			M{
+				"outbound": "block",
+				"ip_cidr": []string{
+					"fc00::/7",
+					"fe80::/10",
+					"::1/128",
+				},
 			},
-		},
-	)
+		)
+	}
 
 	for _, pr := range panelRoutes {
 		rules = append(rules, compilePanelRouteRule(pr)...)
@@ -227,6 +237,24 @@ func buildRoutes(panelRoutes []model.RouteRule, customRules []model.CustomRouteR
 		"final": "direct",
 		"rules": rules,
 	}
+}
+
+func routeKernelConfig(configs ...config.KernelConfig) config.KernelConfig {
+	if len(configs) == 0 {
+		return config.KernelConfig{}
+	}
+	return configs[0]
+}
+
+func cleanedCIDRs(cidrs []string) []string {
+	out := make([]string, 0, len(cidrs))
+	for _, cidr := range cidrs {
+		cidr = strings.TrimSpace(cidr)
+		if cidr != "" {
+			out = append(out, cidr)
+		}
+	}
+	return out
 }
 
 func compilePanelRouteRule(pr model.RouteRule) []M {

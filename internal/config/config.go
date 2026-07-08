@@ -19,14 +19,14 @@ import (
 )
 
 type Config struct {
-	InstanceID string `yaml:"-"`
-	Panel   PanelConfig   `yaml:"panel"`
-	Node    NodeConfig    `yaml:"node"`
-	Kernel  KernelConfig  `yaml:"kernel"`
-	Cert    CertConfig    `yaml:"cert"`
-	Log     LogConfig     `yaml:"log"`
-	Runtime RuntimeConfig `yaml:"runtime"`
-	WS      WSConfig      `yaml:"ws"`
+	InstanceID string        `yaml:"-"`
+	Panel      PanelConfig   `yaml:"panel"`
+	Node       NodeConfig    `yaml:"node"`
+	Kernel     KernelConfig  `yaml:"kernel"`
+	Cert       CertConfig    `yaml:"cert"`
+	Log        LogConfig     `yaml:"log"`
+	Runtime    RuntimeConfig `yaml:"runtime"`
+	WS         WSConfig      `yaml:"ws"`
 	// Standalone enables a local-only node that never contacts the panel.
 	Standalone *StandaloneConfig `yaml:"standalone,omitempty"`
 	// HealthPort enables a lightweight HTTP health-check endpoint on the
@@ -65,10 +65,12 @@ type NodeEntry struct {
 // KernelOverride holds the subset of KernelConfig that is useful to override
 // per-node. Only non-zero fields replace the global value.
 type KernelOverride struct {
-	ConfigDir    string `yaml:"config_dir,omitempty"`
-	GeoDataDir   string `yaml:"geo_data_dir,omitempty"`
-	LogLevel     string `yaml:"log_level,omitempty"`
-	CustomConfig string `yaml:"custom_config,omitempty"`
+	ConfigDir           string   `yaml:"config_dir,omitempty"`
+	GeoDataDir          string   `yaml:"geo_data_dir,omitempty"`
+	LogLevel            string   `yaml:"log_level,omitempty"`
+	CustomConfig        string   `yaml:"custom_config,omitempty"`
+	AllowPrivateCIDRs   []string `yaml:"allow_private_cidrs,omitempty"`
+	DisablePrivateBlock bool     `yaml:"disable_private_block,omitempty"`
 }
 
 // RuntimeConfig tunes Go runtime memory behaviour.
@@ -136,6 +138,14 @@ type KernelConfig struct {
 	// CustomRoute adds route rules to the generated kernel config.
 	// Each item is a raw kernel-native route rule object.
 	CustomRoute []map[string]any `yaml:"custom_route"`
+
+	// AllowPrivateCIDRs inserts direct routing rules before the default private
+	// network block. Use narrow CIDRs such as 192.168.68.9/32 for jump hosts.
+	AllowPrivateCIDRs []string `yaml:"allow_private_cidrs"`
+
+	// DisablePrivateBlock removes the default RFC1918/link-local block. Keep this
+	// false unless the node is intentionally allowed to expose its private LAN.
+	DisablePrivateBlock bool `yaml:"disable_private_block"`
 
 	// CustomConfig is the path to a kernel-native config file (JSON or YAML)
 	// that is deep-merged into the auto-generated config. This enables full
@@ -513,6 +523,12 @@ func (c *Config) inheritFrom(parent *Config) {
 	if len(c.Kernel.CustomRoute) == 0 {
 		c.Kernel.CustomRoute = parent.Kernel.CustomRoute
 	}
+	if len(c.Kernel.AllowPrivateCIDRs) == 0 {
+		c.Kernel.AllowPrivateCIDRs = parent.Kernel.AllowPrivateCIDRs
+	}
+	if !c.Kernel.DisablePrivateBlock {
+		c.Kernel.DisablePrivateBlock = parent.Kernel.DisablePrivateBlock
+	}
 	// Cert (NOT cert_dir — derived from config_dir later)
 	if c.Cert.CertMode == "" {
 		c.Cert.CertMode = parent.Cert.CertMode
@@ -770,6 +786,12 @@ func (c *Config) ExpandNodes() []*Config {
 			}
 			if entry.Kernel.CustomConfig != "" {
 				nodeCfg.Kernel.CustomConfig = entry.Kernel.CustomConfig
+			}
+			if len(entry.Kernel.AllowPrivateCIDRs) > 0 {
+				nodeCfg.Kernel.AllowPrivateCIDRs = entry.Kernel.AllowPrivateCIDRs
+			}
+			if entry.Kernel.DisablePrivateBlock {
+				nodeCfg.Kernel.DisablePrivateBlock = true
 			}
 		} else {
 			// Auto-derive a unique config_dir per node to avoid conflicts.
