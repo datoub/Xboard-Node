@@ -84,14 +84,15 @@ type MachineBaseConfig struct {
 // NodeConfig is the response from GET /api/v1/server/UniProxy/config
 type NodeConfig struct {
 	// NodeID is populated in machine-mode WS events for routing.
-	NodeID          int                    `json:"node_id,omitempty"`
-	Protocol        string                 `json:"protocol"`
-	ListenIP        string                 `json:"listen_ip"`
-	ServerPort      int                    `json:"server_port"`
-	Network         string                 `json:"network"`
-	NetworkSettings map[string]interface{} `json:"networkSettings"`
-	BaseConfig      BaseConfig             `json:"base_config"`
-	Routes          []RouteRule            `json:"routes"`
+	NodeID           int                    `json:"node_id,omitempty"`
+	Protocol         string                 `json:"protocol"`
+	ListenIP         string                 `json:"listen_ip"`
+	ServerPort       int                    `json:"server_port"`
+	Network          string                 `json:"network"`
+	NetworkSettings  map[string]interface{} `json:"networkSettings"`
+	ProtocolSettings map[string]interface{} `json:"protocol_settings,omitempty"`
+	BaseConfig       BaseConfig             `json:"base_config"`
+	Routes           []RouteRule            `json:"routes"`
 
 	// Kernel settings (Xboard extension)
 	KernelType       string            `json:"kernel_type,omitempty"`      // "singbox" or "xray"
@@ -148,17 +149,31 @@ type NodeConfig struct {
 // GetProxyProtocol returns true if AcceptProxyProtocol is set either at node level
 // or in networkSettings (for panel compatibility).
 func (nc *NodeConfig) GetProxyProtocol() bool {
+	if nc == nil {
+		return false
+	}
 	if nc.AcceptProxyProtocol {
 		return true
 	}
-	if nc.NetworkSettings != nil {
-		if v, ok := nc.NetworkSettings["acceptProxyProtocol"]; ok {
-			if b, ok := v.(bool); ok {
-				return b
-			}
-		}
+	if boolSetting(nc.NetworkSettings, "acceptProxyProtocol") || boolSetting(nc.NetworkSettings, "accept_proxy_protocol") {
+		return true
+	}
+	if boolSetting(nc.ProtocolSettings, "acceptProxyProtocol") || boolSetting(nc.ProtocolSettings, "accept_proxy_protocol") {
+		return true
 	}
 	return false
+}
+
+func boolSetting(settings map[string]interface{}, key string) bool {
+	if settings == nil {
+		return false
+	}
+	v, ok := settings[key]
+	if !ok {
+		return false
+	}
+	b, ok := v.(bool)
+	return ok && b
 }
 
 type MultiplexConfig struct {

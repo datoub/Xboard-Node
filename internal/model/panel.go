@@ -121,7 +121,7 @@ func NodeSpecFromPanel(nc *panel.NodeConfig) *NodeSpec {
 		Transport:           nc.Transport,
 		TrafficPattern:      nc.TrafficPattern,
 		Multiplex:           multiplex,
-		AcceptProxyProtocol: nc.AcceptProxyProtocol,
+		AcceptProxyProtocol: nc.GetProxyProtocol(),
 	}
 }
 

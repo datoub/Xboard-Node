@@ -11,6 +11,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/cedar2025/xboard-node/internal/model"
 )
 
 var proxyV2Signature = []byte{'\r', '\n', '\r', '\n', 0, '\r', '\n', 'Q', 'U', 'I', 'T', '\n'}
@@ -29,6 +31,7 @@ func proxyProtocolInternalPort(port int) int {
 type proxyProtocolForwarder struct {
 	listenAddr string
 	targetAddr string
+	targetPort int
 	listener   net.Listener
 	done       chan struct{}
 	once       sync.Once
@@ -39,7 +42,112 @@ func newProxyProtocolForwarder(listenPort, targetPort int) *proxyProtocolForward
 	return &proxyProtocolForwarder{
 		listenAddr: fmt.Sprintf(":%d", listenPort),
 		targetAddr: fmt.Sprintf("127.0.0.1:%d", targetPort),
+		targetPort: targetPort,
 		done:       make(chan struct{}),
+	}
+}
+
+func proxyForwarderSpecs(node *model.NodeSpec) map[int]int {
+	if node == nil || !node.GetProxyProtocol() {
+		return nil
+	}
+	port := node.ServerPort
+	if port <= 0 {
+		return nil
+	}
+	targetPort := node.ProxyInternalPort
+	if targetPort <= 0 {
+		targetPort = proxyProtocolInternalPort(port)
+	}
+	return map[int]int{port: targetPort}
+}
+
+func prepareProxyRuntimeNode(node *model.NodeSpec, current map[int]*proxyProtocolForwarder) (*model.NodeSpec, map[int]int, error) {
+	if node == nil || !node.GetProxyProtocol() {
+		return node, nil, nil
+	}
+	if node.ServerPort <= 0 {
+		return node, nil, nil
+	}
+	targetPort := 0
+	if forwarder := current[node.ServerPort]; forwarder != nil && forwarder.targetPort > 0 {
+		targetPort = forwarder.targetPort
+	}
+	if targetPort <= 0 {
+		exclude := map[int]struct{}{node.ServerPort: {}}
+		for listenPort, forwarder := range current {
+			exclude[listenPort] = struct{}{}
+			if forwarder != nil && forwarder.targetPort > 0 {
+				exclude[forwarder.targetPort] = struct{}{}
+			}
+		}
+		port, err := reserveLoopbackPort(exclude)
+		if err != nil {
+			return nil, nil, err
+		}
+		targetPort = port
+	}
+	clone := *node
+	clone.ProxyInternalPort = targetPort
+	return &clone, map[int]int{node.ServerPort: targetPort}, nil
+}
+
+func reserveLoopbackPort(exclude map[int]struct{}) (int, error) {
+	var lastErr error
+	for attempts := 0; attempts < 32; attempts++ {
+		ln, err := net.Listen("tcp", "127.0.0.1:0")
+		if err != nil {
+			return 0, err
+		}
+		port := ln.Addr().(*net.TCPAddr).Port
+		if err := ln.Close(); err != nil {
+			return 0, err
+		}
+		if _, blocked := exclude[port]; !blocked {
+			if canBindLoopbackUDP(port) {
+				return port, nil
+			}
+			lastErr = fmt.Errorf("reserved loopback port %d is unavailable for udp", port)
+			continue
+		}
+		lastErr = fmt.Errorf("reserved excluded loopback port %d", port)
+	}
+	if lastErr != nil {
+		return 0, lastErr
+	}
+	return 0, fmt.Errorf("no loopback port available")
+}
+
+func canBindLoopbackUDP(port int) bool {
+	conn, err := net.ListenPacket("udp", net.JoinHostPort("127.0.0.1", strconv.Itoa(port)))
+	if err != nil {
+		return false
+	}
+	_ = conn.Close()
+	return true
+}
+
+func startProxyForwarders(specs map[int]int) (map[int]*proxyProtocolForwarder, error) {
+	if len(specs) == 0 {
+		return nil, nil
+	}
+	forwarders := make(map[int]*proxyProtocolForwarder, len(specs))
+	for listenPort, targetPort := range specs {
+		forwarder := newProxyProtocolForwarder(listenPort, targetPort)
+		if err := forwarder.Start(); err != nil {
+			closeProxyForwarders(forwarders)
+			return forwarders, fmt.Errorf("listen %d -> %d: %w", listenPort, targetPort, err)
+		}
+		forwarders[listenPort] = forwarder
+	}
+	return forwarders, nil
+}
+
+func closeProxyForwarders(forwarders map[int]*proxyProtocolForwarder) {
+	for _, forwarder := range forwarders {
+		if forwarder != nil {
+			forwarder.Close()
+		}
 	}
 }
 

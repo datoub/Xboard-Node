@@ -84,8 +84,31 @@ func internalProxyTarget(nc *model.NodeSpec) *model.NodeSpec {
 	}
 	clone := *nc
 	clone.ListenIP = "127.0.0.1"
-	clone.ServerPort = proxyProtocolInternalPort(nc.ServerPort)
+	if nc.ProxyInternalPort > 0 {
+		clone.ServerPort = nc.ProxyInternalPort
+	} else {
+		clone.ServerPort = proxyProtocolInternalPort(nc.ServerPort)
+	}
+	clone.AcceptProxyProtocol = false
+	clone.NetworkSettings = stripProxyProtocolSettings(clone.NetworkSettings)
 	return &clone
+}
+
+func stripProxyProtocolSettings(settings map[string]any) map[string]any {
+	if len(settings) == 0 {
+		return settings
+	}
+	clone := make(map[string]any, len(settings))
+	for key, value := range settings {
+		if key == "acceptProxyProtocol" || key == "accept_proxy_protocol" {
+			continue
+		}
+		clone[key] = value
+	}
+	if len(clone) == 0 {
+		return nil
+	}
+	return clone
 }
 
 // outboundConfigToSingbox converts a structured OutboundConfig (from the panel)

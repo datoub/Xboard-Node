@@ -45,6 +45,7 @@ type NodeSpec struct {
 
 	Multiplex           *MultiplexConfig
 	AcceptProxyProtocol bool
+	ProxyInternalPort   int
 }
 
 type OutboundConfig struct {
@@ -106,14 +107,22 @@ func (n *NodeSpec) GetProxyProtocol() bool {
 	if n.AcceptProxyProtocol {
 		return true
 	}
-	if n.NetworkSettings != nil {
-		if v, ok := n.NetworkSettings["acceptProxyProtocol"]; ok {
-			if b, ok := v.(bool); ok {
-				return b
-			}
-		}
+	if boolSetting(n.NetworkSettings, "acceptProxyProtocol") || boolSetting(n.NetworkSettings, "accept_proxy_protocol") {
+		return true
 	}
 	return false
+}
+
+func boolSetting(settings map[string]any, key string) bool {
+	if settings == nil {
+		return false
+	}
+	v, ok := settings[key]
+	if !ok {
+		return false
+	}
+	b, ok := v.(bool)
+	return ok && b
 }
 
 func cloneAnyMap(src map[string]any) map[string]any {

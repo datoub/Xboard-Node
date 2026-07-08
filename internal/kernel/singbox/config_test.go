@@ -576,6 +576,24 @@ func TestBuildConfig_ShadowsocksProxyProtocol(t *testing.T) {
 		assertMapValue(t, inbounds[0], "listen", "127.0.0.1")
 		assertMapValue(t, inbounds[0], "listen_port", 10111)
 	})
+
+	t.Run("enabled from protocol settings", func(t *testing.T) {
+		nc := &panel.NodeConfig{
+			Protocol:   "shadowsocks",
+			ServerPort: 111,
+			Cipher:     "aes-128-gcm",
+			ProtocolSettings: map[string]interface{}{
+				"accept_proxy_protocol": true,
+			},
+		}
+		cfg := buildConfig(kcfg, testNodeSpec(nc), testUsers, kernel.TLSCert{})
+		inbounds := cfg["inbounds"].([]M)
+		if _, ok := inbounds[0]["proxy_protocol"]; ok {
+			t.Fatal("proxy_protocol should be handled by xboard-node forwarder, not sing-box")
+		}
+		assertMapValue(t, inbounds[0], "listen", "127.0.0.1")
+		assertMapValue(t, inbounds[0], "listen_port", 10111)
+	})
 }
 
 func TestBuildConfig_OutboundPriority(t *testing.T) {

@@ -117,6 +117,46 @@ func TestNodeConfig_UnmarshalFullPanelResponse(t *testing.T) {
 	}
 }
 
+func TestNodeConfig_GetProxyProtocolCompatibility(t *testing.T) {
+	tests := []struct {
+		name string
+		json string
+	}{
+		{
+			name: "top level",
+			json: `{"accept_proxy_protocol":true}`,
+		},
+		{
+			name: "network settings camel",
+			json: `{"networkSettings":{"acceptProxyProtocol":true}}`,
+		},
+		{
+			name: "network settings snake",
+			json: `{"networkSettings":{"accept_proxy_protocol":true}}`,
+		},
+		{
+			name: "protocol settings snake",
+			json: `{"protocol_settings":{"accept_proxy_protocol":true}}`,
+		},
+		{
+			name: "protocol settings camel",
+			json: `{"protocol_settings":{"acceptProxyProtocol":true}}`,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			var nc NodeConfig
+			if err := json.Unmarshal([]byte(tc.json), &nc); err != nil {
+				t.Fatalf("unmarshal: %v", err)
+			}
+			if !nc.GetProxyProtocol() {
+				t.Fatal("expected proxy protocol to be enabled")
+			}
+		})
+	}
+}
+
 func TestUsersResponse_Unmarshal(t *testing.T) {
 	input := `{
 		"users": [
