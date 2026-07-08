@@ -4,6 +4,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"encoding/pem"
+	"reflect"
 	"testing"
 
 	"github.com/cedar2025/xboard-node/internal/config"
@@ -273,6 +274,35 @@ func TestBuildRouting_Default(t *testing.T) {
 	ips := rules[0]["ip"].([]string)
 	if len(ips) < 5 {
 		t.Errorf("expected multiple private CIDRs, got %d", len(ips))
+	}
+}
+
+func TestBuildRouting_AllowPrivateCIDRsBeforeDefaultBlock(t *testing.T) {
+	routing := buildRouting(nil, nil, nil, config.KernelConfig{
+		AllowPrivateCIDRs: []string{"192.168.68.8/32", " 192.168.68.9/32 "},
+	})
+	rules := routing["rules"].([]M)
+
+	if len(rules) != 2 {
+		t.Fatalf("expected allow + default block, got %d", len(rules))
+	}
+	if rules[0]["outboundTag"] != "direct" {
+		t.Fatalf("expected allow rule first, got %v", rules[0])
+	}
+	ips := rules[0]["ip"].([]string)
+	if !reflect.DeepEqual(ips, []string{"192.168.68.8/32", "192.168.68.9/32"}) {
+		t.Fatalf("allow cidrs: got %v", ips)
+	}
+	if rules[1]["outboundTag"] != "block" {
+		t.Fatalf("expected default block second, got %v", rules[1])
+	}
+}
+
+func TestBuildRouting_DisablePrivateBlock(t *testing.T) {
+	routing := buildRouting(nil, nil, nil, config.KernelConfig{DisablePrivateBlock: true})
+	rules := routing["rules"].([]M)
+	if len(rules) != 0 {
+		t.Fatalf("expected no default private block rules, got %d", len(rules))
 	}
 }
 

@@ -78,7 +78,7 @@ func buildConfig(kcfg config.KernelConfig, nc *model.NodeSpec, users []model.Use
 	}
 
 	// Merge panel routes and static config routes
-	cfg["routing"] = buildRouting(nc.Routes, nc.CustomRouteRules, mergeRouteList(nc.CustomRoutes, kcfg.CustomRoute))
+	cfg["routing"] = buildRouting(nc.Routes, nc.CustomRouteRules, mergeRouteList(nc.CustomRoutes, kcfg.CustomRoute), kcfg)
 
 	mergeCustomXray(cfg, kcfg)
 	return cfg
@@ -645,8 +645,9 @@ func buildRealitySettings(nc *model.NodeSpec) M {
 	return reality
 }
 
-func buildRouting(rules []model.RouteRule, customRouteRules []model.CustomRouteRule, customRules []map[string]any) M {
+func buildRouting(rules []model.RouteRule, customRouteRules []model.CustomRouteRule, customRules []map[string]any, kcfg ...config.KernelConfig) M {
 	var xrayRules []M
+	routeCfg := routeKernelConfig(kcfg...)
 
 	// Structured custom routes now take the highest priority for panel-managed overrides.
 	for _, rule := range customRouteRules {
@@ -661,23 +662,33 @@ func buildRouting(rules []model.RouteRule, customRouteRules []model.CustomRouteR
 		xrayRules = append(xrayRules, M(cr))
 	}
 
-	xrayRules = append(xrayRules, M{
-		"type": "field",
-		"ip": []string{
-			"10.0.0.0/8",
-			"100.64.0.0/10",
-			"127.0.0.0/8",
-			"169.254.0.0/16",
-			"172.16.0.0/12",
-			"192.0.0.0/24",
-			"192.168.0.0/16",
-			"198.18.0.0/15",
-			"fc00::/7",
-			"fe80::/10",
-			"::1/128",
-		},
-		"outboundTag": "block",
-	})
+	if allowed := cleanedCIDRs(routeCfg.AllowPrivateCIDRs); len(allowed) > 0 {
+		xrayRules = append(xrayRules, M{
+			"type":        "field",
+			"ip":          allowed,
+			"outboundTag": "direct",
+		})
+	}
+
+	if !routeCfg.DisablePrivateBlock {
+		xrayRules = append(xrayRules, M{
+			"type": "field",
+			"ip": []string{
+				"10.0.0.0/8",
+				"100.64.0.0/10",
+				"127.0.0.0/8",
+				"169.254.0.0/16",
+				"172.16.0.0/12",
+				"192.0.0.0/24",
+				"192.168.0.0/16",
+				"198.18.0.0/15",
+				"fc00::/7",
+				"fe80::/10",
+				"::1/128",
+			},
+			"outboundTag": "block",
+		})
+	}
 
 	for _, rule := range rules {
 		xrayRules = append(xrayRules, compilePanelRouteRule(rule)...)
@@ -687,6 +698,24 @@ func buildRouting(rules []model.RouteRule, customRouteRules []model.CustomRouteR
 		"domainStrategy": "AsIs",
 		"rules":          xrayRules,
 	}
+}
+
+func routeKernelConfig(configs ...config.KernelConfig) config.KernelConfig {
+	if len(configs) == 0 {
+		return config.KernelConfig{}
+	}
+	return configs[0]
+}
+
+func cleanedCIDRs(cidrs []string) []string {
+	out := make([]string, 0, len(cidrs))
+	for _, cidr := range cidrs {
+		cidr = strings.TrimSpace(cidr)
+		if cidr != "" {
+			out = append(out, cidr)
+		}
+	}
+	return out
 }
 
 func compilePanelRouteRule(rule model.RouteRule) []M {

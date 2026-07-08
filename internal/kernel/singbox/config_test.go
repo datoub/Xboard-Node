@@ -692,6 +692,28 @@ func TestBuildRoutes_Default(t *testing.T) {
 	assertMapValue(t, rules[1], "outbound", "block")
 }
 
+func TestBuildRoutes_AllowPrivateCIDRsBeforeDefaultBlock(t *testing.T) {
+	route := buildRoutes(nil, nil, nil, config.KernelConfig{
+		AllowPrivateCIDRs: []string{"192.168.68.8/32", " 192.168.68.9/32 "},
+	})
+	rules := route["rules"].([]M)
+
+	assertMapValue(t, rules[0], "outbound", "direct")
+	cidrs := rules[0]["ip_cidr"].([]string)
+	if !reflect.DeepEqual(cidrs, []string{"192.168.68.8/32", "192.168.68.9/32"}) {
+		t.Fatalf("allow cidrs: got %v", cidrs)
+	}
+	assertMapValue(t, rules[1], "outbound", "block")
+}
+
+func TestBuildRoutes_DisablePrivateBlock(t *testing.T) {
+	route := buildRoutes(nil, nil, nil, config.KernelConfig{DisablePrivateBlock: true})
+	rules := route["rules"].([]M)
+	if len(rules) != 0 {
+		t.Fatalf("expected no default private block rules, got %d", len(rules))
+	}
+}
+
 func TestBuildRoutes_WithCustomRules(t *testing.T) {
 	rules := []panel.RouteRule{
 		{ID: 1, Match: []string{"blocked.com"}, Action: "block"},

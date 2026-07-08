@@ -10,6 +10,11 @@
 # ── Multiple instances ──
 # kernel:
 #   type: "singbox"
+#   # Keep the default private network block, but allow only explicit jump hosts.
+#   # allow_private_cidrs:
+#   #   - "192.168.68.8/32"
+#   #   - "192.168.68.9/32"
+#   # disable_private_block: false
 # log:
 #   level: "info"
 # instances:
