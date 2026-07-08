@@ -62,7 +62,7 @@ type SingBox struct {
 	// Router instance during Reload. Reset to false on full restart.
 	trackerRegistered bool
 
-	proxyForwarder *proxyProtocolForwarder
+	proxyForwarders map[int]*proxyProtocolForwarder
 }
 
 func New(cfg config.KernelConfig) *SingBox {
@@ -95,8 +95,11 @@ func (s *SingBox) Start(nodeConfig *model.NodeSpec, users []model.UserSpec, tls 
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	proxyEnabled := nodeConfig.GetProxyProtocol()
-	cfgMap := buildConfig(s.cfg, nodeConfig, users, tls)
+	runtimeNodeConfig, desiredForwarders, err := prepareProxyRuntimeNode(nodeConfig, s.proxyForwarders)
+	if err != nil {
+		return fmt.Errorf("prepare proxy protocol runtime: %w", err)
+	}
+	cfgMap := buildConfig(s.cfg, runtimeNodeConfig, users, tls)
 	data, err := json.Marshal(cfgMap)
 	if err != nil {
 		return fmt.Errorf("marshal config: %w", err)
@@ -118,13 +121,13 @@ func (s *SingBox) Start(nodeConfig *model.NodeSpec, users []model.UserSpec, tls 
 	oldCancel := s.cancel
 	oldCtx := s.ctx
 	oldTracker := s.connTracker
-	oldForwarder := s.proxyForwarder
+	oldForwarders := s.proxyForwarders
 
-	if proxyEnabled && oldForwarder != nil {
-		oldForwarder.Close()
-		oldForwarder = nil
+	if len(desiredForwarders) > 0 || len(oldForwarders) > 0 {
+		closeProxyForwarders(oldForwarders)
+		oldForwarders = nil
 	}
-	if proxyEnabled && oldBox != nil {
+	if (len(desiredForwarders) > 0 || len(s.proxyForwarders) > 0) && oldBox != nil {
 		oldBox.Close()
 		if oldCancel != nil {
 			oldCancel()
@@ -145,19 +148,17 @@ func (s *SingBox) Start(nodeConfig *model.NodeSpec, users []model.UserSpec, tls 
 	}
 
 	if err := instance.Start(); err != nil {
-		instance.Close()
-		cancel()
+		closeSingBoxInstance(ctx, instance, cancel)
 		return fmt.Errorf("start sing-box: %w", err)
 	}
 
-	var forwarder *proxyProtocolForwarder
-	if proxyEnabled {
-		forwarder = newProxyProtocolForwarder(nodeConfig.ServerPort, proxyProtocolInternalPort(nodeConfig.ServerPort))
-		if err := forwarder.Start(); err != nil {
-			instance.Close()
-			cancel()
-			return fmt.Errorf("start proxy protocol forwarder: %w", err)
+	forwarders, err := startProxyForwarders(desiredForwarders)
+	if err != nil {
+		if len(forwarders) > 0 {
+			closeProxyForwarders(forwarders)
 		}
+		closeSingBoxInstance(ctx, instance, cancel)
+		return fmt.Errorf("start proxy protocol forwarders: %w", err)
 	}
 
 	// New instance started successfully — swap state.
@@ -167,7 +168,7 @@ func (s *SingBox) Start(nodeConfig *model.NodeSpec, users []model.UserSpec, tls 
 	s.users = users
 	s.nodeConfig = nodeConfig
 	s.tls = tls
-	s.proxyForwarder = forwarder
+	s.proxyForwarders = forwarders
 
 	// Fresh tracker on full restart.
 	s.connTracker = NewConnTracker(0)
@@ -184,20 +185,32 @@ func (s *SingBox) Start(nodeConfig *model.NodeSpec, users []model.UserSpec, tls 
 
 	// Recycle old instance in background — drain then close.
 	if oldBox != nil {
-		go recycleOldBox(oldBox, oldCancel, oldCtx, oldTracker, oldForwarder)
+		go recycleOldBox(oldBox, oldCancel, oldCtx, oldTracker, oldForwarders)
 	}
 
 	nlog.Core().Debug("sing-box started", "users", len(users))
 	return nil
 }
 
+func closeSingBoxInstance(ctx context.Context, instance *box.Box, cancel context.CancelFunc) {
+	if ctx != nil {
+		if im := service.FromContext[adapter.InboundManager](ctx); im != nil {
+			_ = im.Close()
+		}
+	}
+	if instance != nil {
+		instance.Close()
+	}
+	if cancel != nil {
+		cancel()
+	}
+}
+
 // recycleOldBox gracefully shuts down a previous sing-box instance in the
 // background. It closes listen sockets first, waits for connections to drain,
 // then hard-closes. This avoids blocking the new instance's startup.
-func recycleOldBox(oldBox *box.Box, oldCancel context.CancelFunc, oldCtx context.Context, oldTracker *ConnTracker, oldForwarder *proxyProtocolForwarder) {
-	if oldForwarder != nil {
-		oldForwarder.Close()
-	}
+func recycleOldBox(oldBox *box.Box, oldCancel context.CancelFunc, oldCtx context.Context, oldTracker *ConnTracker, oldForwarders map[int]*proxyProtocolForwarder) {
+	closeProxyForwarders(oldForwarders)
 
 	// Step 1: close listen sockets so no new connections arrive on old ports.
 	if oldCtx != nil {
@@ -225,6 +238,44 @@ func recycleOldBox(oldBox *box.Box, oldCancel context.CancelFunc, oldCtx context
 	nlog.Core().Debug("sing-box: old instance recycled")
 }
 
+func (s *SingBox) syncProxyForwarders(desired map[int]int) error {
+	if len(desired) == 0 {
+		closeProxyForwarders(s.proxyForwarders)
+		s.proxyForwarders = nil
+		return nil
+	}
+	if s.proxyForwarders == nil {
+		forwarders, err := startProxyForwarders(desired)
+		if err != nil {
+			return fmt.Errorf("sync proxy protocol forwarders: %w", err)
+		}
+		s.proxyForwarders = forwarders
+		return nil
+	}
+
+	for listenPort, forwarder := range s.proxyForwarders {
+		targetPort, keep := desired[listenPort]
+		if !keep || forwarder == nil || forwarder.targetPort != targetPort {
+			if forwarder != nil {
+				forwarder.Close()
+			}
+			delete(s.proxyForwarders, listenPort)
+		}
+	}
+
+	for listenPort, targetPort := range desired {
+		if _, ok := s.proxyForwarders[listenPort]; ok {
+			continue
+		}
+		forwarder := newProxyProtocolForwarder(listenPort, targetPort)
+		if err := forwarder.Start(); err != nil {
+			return fmt.Errorf("sync proxy protocol forwarder %d -> %d: %w", listenPort, targetPort, err)
+		}
+		s.proxyForwarders[listenPort] = forwarder
+	}
+	return nil
+}
+
 // Reload hot-swaps the inbound users and routing rules without restarting the box.
 // Routes, outbounds, and the connTracker stay alive so in-flight connections
 // continue to be tracked correctly.
@@ -236,7 +287,11 @@ func (s *SingBox) Reload(nodeConfig *model.NodeSpec, users []model.UserSpec, tls
 		return fmt.Errorf("not running")
 	}
 
-	cfgMap := buildConfig(s.cfg, nodeConfig, users, tls)
+	runtimeNodeConfig, desiredForwarders, err := prepareProxyRuntimeNode(nodeConfig, s.proxyForwarders)
+	if err != nil {
+		return fmt.Errorf("prepare proxy protocol runtime: %w", err)
+	}
+	cfgMap := buildConfig(s.cfg, runtimeNodeConfig, users, tls)
 	data, err := json.Marshal(cfgMap)
 	if err != nil {
 		return fmt.Errorf("marshal config: %w", err)
@@ -269,6 +324,10 @@ func (s *SingBox) Reload(nodeConfig *model.NodeSpec, users []model.UserSpec, tls
 	// Configuration hash check for inbound reconstruction
 	tlsChanged := !bytes.Equal(s.tls.CertPEM, tls.CertPEM) || !bytes.Equal(s.tls.KeyPEM, tls.KeyPEM)
 	configChanged := tlsChanged || s.nodeConfig == nil || kernel.ComputeHash(nodeConfig, users) != kernel.ComputeHash(s.nodeConfig, s.users)
+	if len(desiredForwarders) == 0 && len(s.proxyForwarders) > 0 {
+		closeProxyForwarders(s.proxyForwarders)
+		s.proxyForwarders = nil
+	}
 
 	for _, inb := range opts.Inbounds {
 		tag := inb.Tag
@@ -342,6 +401,11 @@ func (s *SingBox) Reload(nodeConfig *model.NodeSpec, users []model.UserSpec, tls
 	if s.connTracker != nil {
 		s.connTracker.SetUserMap(buildUserMap(users))
 	}
+	if len(desiredForwarders) > 0 {
+		if err := s.syncProxyForwarders(desiredForwarders); err != nil {
+			return err
+		}
+	}
 
 	nlog.Core().Debug("sing-box reloaded", "users", len(users))
 	s.users = users
@@ -378,10 +442,8 @@ func (s *SingBox) stop() {
 		return
 	}
 
-	if s.proxyForwarder != nil {
-		s.proxyForwarder.Close()
-		s.proxyForwarder = nil
-	}
+	closeProxyForwarders(s.proxyForwarders)
+	s.proxyForwarders = nil
 
 	// Step 1: close all listen sockets so no new connections are accepted.
 	// im.Close() sets m.started=false so the subsequent box.Close() call is a no-op
